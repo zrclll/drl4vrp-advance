@@ -120,7 +120,7 @@ class DRL4TSP(nn.Module):
         elements are updated, and is called after each 'point' to the input element.
     mask_fn: function or None
         Allows us to specify which elements of the input sequence are allowed to
-        be selected. This is useful for speeding up training of the networks,
+        be selected. This is dataloaderuseful for speeding up training of the networks,
         by providing a sort of 'rules' guidlines to the algorithm. If no mask
         is provided, we terminate the search after a fixed number of iterations
         to avoid tours that stretch forever
