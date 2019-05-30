@@ -160,14 +160,17 @@ def train(actor, critic, task, num_nodes, train_data, valid_data, reward_fn,
             dynamic = dynamic.to(device)
             x0 = x0.to(device) if len(x0) > 0 else None
 
+
             # Full forward pass through the dataset
             tour_indices, tour_logp = actor(static, dynamic, x0)
+
 
             # Sum the log probabilities for each city in the tour
             reward = reward_fn(static, tour_indices)
 
             # Query the critic for an estimate of the reward
             critic_est = critic(static, dynamic).view(-1)
+
 
             advantage = (reward - critic_est)
             actor_loss = torch.mean(advantage.detach() * tour_logp.sum(dim=1))

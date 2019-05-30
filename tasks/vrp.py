@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 
 
 class VehicleRoutingDataset(Dataset):
-    def __init__(self, input_size,num_samples, max_load=20, max_demand=9,
+    def __init__(self, num_samples,input_size, max_load=20, max_demand=9,
                  seed=None):
         super(VehicleRoutingDataset, self).__init__()
 
