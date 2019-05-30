@@ -46,7 +46,7 @@ class VehicleRoutingDataset(Dataset):
         # All states will have their own intrinsic demand in [1, max_demand), 
         # then scaled by the maximum load. E.g. if load=10 and max_demand=30, 
         # demands will be scaled to the range (0, 3)
-        demands = torch.randint(1, max_demand + 1, dynamic_shape)
+        demands = torch.randint(1, max_demand + 1, dynamic_shape,dtype=torch.float)
         demands = demands / float(max_load)
 
         demands[:, 0, 0] = 0  # depot starts with a demand of 0
@@ -206,7 +206,7 @@ def render(static, tour_indices, save_path):
         ax.set_ylim(0, 1)
 
     plt.tight_layout()
-    plt.savefig(save_path, bbox_inches='tight', dpi=200)
+    plt.savefig(save_path, bbox_inches='tight', dpi=400)
 
 
 '''

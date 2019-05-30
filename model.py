@@ -220,6 +220,8 @@ class DRL4TSP(nn.Module):
                 prob, ptr = torch.max(probs, 1)  # Greedy
                 logp = prob.log()
 
+
+
             # After visiting a node update the dynamic representation
             if self.update_fn is not None:
                 dynamic = self.update_fn(dynamic, ptr.data)

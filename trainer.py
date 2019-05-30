@@ -171,7 +171,6 @@ def train(actor, critic, task, num_nodes, train_data, valid_data, reward_fn,
             # Query the critic for an estimate of the reward
             critic_est = critic(static, dynamic).view(-1)
 
-
             advantage = (reward - critic_est)
             actor_loss = torch.mean(advantage.detach() * tour_logp.sum(dim=1))
             critic_loss = torch.mean(advantage ** 2)
