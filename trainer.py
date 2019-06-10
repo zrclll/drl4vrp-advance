@@ -17,12 +17,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
-
+from tensorboardX import SummaryWriter
 from model import DRL4TSP, Encoder
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-#device = torch.device('cpu')
-
 
 class StateCritic(nn.Module):
     """Estimates the problem complexity.
@@ -124,33 +122,36 @@ def train(actor, critic, task, num_nodes, train_data, valid_data, reward_fn,
           render_fn, batch_size, actor_lr, critic_lr, max_grad_norm,
           **kwargs):
     """Constructs the main actor & critic networks, and performs all training."""
-
     now = '%s' % datetime.datetime.now().time()
     now = now.replace(':', '_')
     save_dir = os.path.join(task, '%d' % num_nodes, now)
+    tensorboard_dir=os.path.join(save_dir,'Tensorboard')
+    summary = SummaryWriter(tensorboard_dir)
 
     checkpoint_dir = os.path.join(save_dir, 'checkpoints')
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
 
     actor_optim = optim.Adam(actor.parameters(), lr=actor_lr)
-    critic_optim = optim.Adam(critic.parameters(), lr=critic_lr)
+    # critic_optim = optim.Adam(critic.parameters(), lr=critic_lr)
 
     train_loader = DataLoader(train_data, batch_size, True, num_workers=0)
     valid_loader = DataLoader(valid_data, batch_size, False, num_workers=0)
 
     best_params = None
     best_reward = np.inf
+    steps = 0
 
     for epoch in range(20):
 
         actor.train()
-        critic.train()
+        # critic.train()
 
         times, losses, rewards, critic_rewards = [], [], [], []
 
         epoch_start = time.time()
         start = epoch_start
+
 
         for batch_idx, batch in enumerate(train_loader):
 
@@ -169,25 +170,28 @@ def train(actor, critic, task, num_nodes, train_data, valid_data, reward_fn,
             reward = reward_fn(static, tour_indices)
 
             # Query the critic for an estimate of the reward
-            critic_est = critic(static, dynamic).view(-1)
+            # critic_est = critic(static, dynamic).view(-1)
 
-            advantage = (reward - critic_est)
+            # advantage = (reward - critic_est)
+            advantage = (reward)
             actor_loss = torch.mean(advantage.detach() * tour_logp.sum(dim=1))
-            critic_loss = torch.mean(advantage ** 2)
+            # critic_loss = torch.mean(advantage ** 2)
 
             actor_optim.zero_grad()
             actor_loss.backward()
             torch.nn.utils.clip_grad_norm_(actor.parameters(), max_grad_norm)
             actor_optim.step()
 
-            critic_optim.zero_grad()
-            critic_loss.backward()
-            torch.nn.utils.clip_grad_norm_(critic.parameters(), max_grad_norm)
-            critic_optim.step()
+            # critic_optim.zero_grad()
+            # critic_loss.backward()
+            # torch.nn.utils.clip_grad_norm_(critic.parameters(), max_grad_norm)
+            # critic_optim.step()
 
-            critic_rewards.append(torch.mean(critic_est.detach()).item())
+            # critic_rewards.append(torch.mean(critic_est.detach()).item())
             rewards.append(torch.mean(reward.detach()).item())
             losses.append(torch.mean(actor_loss.detach()).item())
+
+            steps+=1
 
             if (batch_idx + 1) % 100 == 0:
                 end = time.time()
@@ -196,6 +200,10 @@ def train(actor, critic, task, num_nodes, train_data, valid_data, reward_fn,
 
                 mean_loss = np.mean(losses[-100:])
                 mean_reward = np.mean(rewards[-100:])
+
+                # tensorboard save
+                summary.add_scalar('scalar/actor_loss', mean_loss, steps)
+                summary.add_scalar('scalar/reward', mean_reward,steps)
 
                 print('  Batch %d/%d, reward: %2.3f, loss: %2.4f, took: %2.4fs' %
                       (batch_idx, len(train_loader), mean_reward, mean_loss,
@@ -232,10 +240,10 @@ def train(actor, critic, task, num_nodes, train_data, valid_data, reward_fn,
             save_path = os.path.join(save_dir, 'critic.pt')
             torch.save(critic.state_dict(), save_path)
 
-        print('Mean epoch loss/reward: %2.4f, %2.4f, %2.4f, took: %2.4fs '\
-              '(%2.4fs / 100 batches)\n' % \
-              (mean_loss, mean_reward, mean_valid, time.time() - epoch_start,
-              np.mean(times)))
+        print('Mean epoch %d took: %2.4fs (%2.4fs / 100 batches)\n' % \
+              (epoch,time.time() - epoch_start, np.mean(times)))
+        print('Mean_loss: %2.4f, mean_reward: %2.4f, mean_valid: %2.4f \n' % \
+              (mean_loss, mean_reward, mean_valid))
 
 
 
