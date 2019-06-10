@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 class VRPTWDataset(Dataset):
     def __init__(self, num_samples,input_size,
                  max_load=20, max_demand=9,
-                 min_TW=1,max_TW=4,TW_from=0,TW_end=24,ServiceTime=0.5,V_speed=1,
+                 min_TW=2,max_TW=8,TW_from=0,TW_to=48,ServiceTime=0,V_speed=1,
                  seed=None):
         super(VRPTWDataset, self).__init__()
 
@@ -27,7 +27,7 @@ class VRPTWDataset(Dataset):
             raise ValueError(':param max_load: must be > max_demand')
         if max_TW < min_TW:
             raise ValueError(':param max_TW: must be > min_TW')
-        if TW_end < TW_from:
+        if TW_to < TW_from:
             raise ValueError(':param TW_end: must be > TW_from')
 
         if seed is None:
@@ -41,19 +41,31 @@ class VRPTWDataset(Dataset):
         self.min_TW=min_TW
         self.max_TW=max_TW
         self.tw_from=TW_from
-        self.tw_end=TW_end
+        self.tw_end=TW_to
         self.serviceTime=ServiceTime
         self.v_speed=V_speed
 
         # Depot location will be the first node in each
+        # tw between [0,1]
         locations = torch.rand((num_samples, 2, input_size + 1))
-        self.static = locations
+
+        # TW_end = Tw_start + TW_span
+        tw_start=torch.randint(TW_from,TW_to-max_TW+1,(num_samples, 1, input_size + 1),dtype=torch.float)
+        tw_span=torch.randint(min_TW,max_TW+1,(num_samples, 1, input_size + 1),dtype=torch.float)
+        tw_end=(tw_start+tw_span)/float(TW_to-TW_from)
+        tw_start=tw_start/float(TW_to-TW_from)
+        tw_start[:,0,0]=TW_from/TW_to-TW_from
+        tw_end[:,0,0]=TW_to/TW_to-TW_from
+        self.static = torch.cat((locations,tw_start,tw_end),1)
 
         # All states will broadcast the drivers current load
         # Note that we only use a load between [0, 1] to prevent large
         # numbers entering the neural network
         dynamic_shape = (num_samples, 1, input_size + 1)
         loads = torch.full(dynamic_shape, 1.)
+
+        # vtime is the Vehicle time to caculator the current time.
+        vtime=torch.full(dynamic_shape,0.)
 
         # All states will have their own intrinsic demand in [1, max_demand), 
         # then scaled by the maximum load. E.g. if load=10 and max_demand=30, 
@@ -62,7 +74,7 @@ class VRPTWDataset(Dataset):
         demands = demands / float(max_load)
 
         demands[:, 0, 0] = 0  # depot starts with a demand of 0
-        self.dynamic = torch.tensor(np.concatenate((loads, demands), axis=1),dtype=torch.float)
+        self.dynamic = torch.cat((loads, demands,vtime), 1)
 
     def __len__(self):
         return self.num_samples
