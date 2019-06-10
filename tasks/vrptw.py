@@ -14,6 +14,7 @@ from torch.autograd import Variable
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 class VRPTWDataset(Dataset):
@@ -35,19 +36,22 @@ class VRPTWDataset(Dataset):
         np.random.seed(seed)
         torch.manual_seed(seed)
 
+        self.num_nodes=input_size
         self.num_samples = num_samples
         self.max_load = max_load
         self.max_demand = max_demand
+
         self.min_TW=min_TW
         self.max_TW=max_TW
         self.tw_from=TW_from
         self.tw_end=TW_to
-        self.serviceTime=ServiceTime
-        self.v_speed=V_speed
+        self.serviceTime=ServiceTime/(TW_to-TW_from)
+        self.v_speed=V_speed*(TW_to-TW_from)
 
         # Depot location will be the first node in each
         # tw between [0,1]
-        locations = torch.rand((num_samples, 2, input_size + 1))
+        self.locations = torch.rand((num_samples, 2, input_size + 1))
+        self.dis_matrix=self.generate_time_matrix()
 
         # TW_end = Tw_start + TW_span
         tw_start=torch.randint(TW_from,TW_to-max_TW+1,(num_samples, 1, input_size + 1),dtype=torch.float)
@@ -56,7 +60,7 @@ class VRPTWDataset(Dataset):
         tw_start=tw_start/float(TW_to-TW_from)
         tw_start[:,0,0]=TW_from/TW_to-TW_from
         tw_end[:,0,0]=TW_to/TW_to-TW_from
-        self.static = torch.cat((locations,tw_start,tw_end),1)
+        self.static = torch.cat((self.locations,tw_start,tw_end),1)
 
         # All states will broadcast the drivers current load
         # Note that we only use a load between [0, 1] to prevent large
@@ -64,7 +68,7 @@ class VRPTWDataset(Dataset):
         dynamic_shape = (num_samples, 1, input_size + 1)
         loads = torch.full(dynamic_shape, 1.)
 
-        # vtime is the Vehicle time to caculator the current time.
+        # vtime is the Vehicle time to time the current time.
         vtime=torch.full(dynamic_shape,0.)
 
         # All states will have their own intrinsic demand in [1, max_demand), 
@@ -122,7 +126,13 @@ class VRPTWDataset(Dataset):
 
         return new_mask.float()
 
-    def update_dynamic(self, dynamic, chosen_idx):
+    def update_time_mask(self,dynamic, chosen_idx=None):
+
+        vtime = dynamic.data[:2]  # (batch_size, seq_len)
+
+
+
+    def update_dynamic(self, dynamic, chosen_idx,distance_vector):
         """Updates the (load, demand) dataset values."""
 
         # Update the dynamic elements differently for if we visit depot vs. a city
@@ -132,16 +142,23 @@ class VRPTWDataset(Dataset):
         # Clone the dynamic variable so we don't mess up graph
         all_loads = dynamic[:, 0].clone()
         all_demands = dynamic[:, 1].clone()
+        all_vtime=dynamic[:,2].clone()
 
         load = torch.gather(all_loads, 1, chosen_idx.unsqueeze(1))
         demand = torch.gather(all_demands, 1, chosen_idx.unsqueeze(1))
+        vtime=torch.gather(all_vtime,1,chosen_idx.unsqueeze(1))
+
 
         # Across the minibatch - if we've chosen to visit a city, try to satisfy
         # as much demand as possible
         if visit.any():
+            servicetime=torch.full([self.num_samples,1],self.serviceTime)
 
             new_load = torch.clamp(load - demand, min=0)
             new_demand = torch.clamp(demand - load, min=0)
+
+            rout_time=distance_vector.unsqueeze(1)/self.v_speed
+            new_vtime=torch.clamp(vtime+rout_time+servicetime,max=1)
 
             # Broadcast the load to all nodes, but update demand seperately
             visit_idx = visit.nonzero().squeeze()
@@ -149,6 +166,7 @@ class VRPTWDataset(Dataset):
             all_loads[visit_idx] = new_load[visit_idx]
             all_demands[visit_idx, chosen_idx[visit_idx]] = new_demand[visit_idx].view(-1)
             all_demands[visit_idx, 0] = -1. + new_load[visit_idx].view(-1)
+            all_vtime[visit_idx]=new_vtime[visit_idx]
 
         # Return to depot to fill vehicle load
         if depot.any():
@@ -157,6 +175,18 @@ class VRPTWDataset(Dataset):
 
         tensor = torch.cat((all_loads.unsqueeze(1), all_demands.unsqueeze(1)), 1)
         return torch.tensor(tensor.data, device=dynamic.device)
+
+    def generate_time_matrix(self):
+        tbar=tqdm(total=self.num_samples*self.num_nodes*self.num_nodes)
+        dis_max=np.zeros([self.num_samples,self.num_nodes,self.num_nodes])
+        for i in range(self.num_samples):
+            for j in range(self.num_nodes):
+                for k in range(self.num_nodes):
+                    distance=torch.sqrt(torch.pow(self.locations[i,0,j] - self.locations[i,0,k], 2)+
+                                        torch.pow(self.locations[i,1,j] - self.locations[i,1,k], 2))
+                    dis_max[i,j,k]=distance
+                    tbar.update(1)
+        return dis_max
 
 
 def reward(static, tour_indices):
