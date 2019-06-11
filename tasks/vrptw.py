@@ -20,16 +20,16 @@ from tqdm import tqdm
 class VRPTWDataset(Dataset):
     def __init__(self, num_samples,input_size,
                  max_load=20, max_demand=9,
-                 min_TW=2,max_TW=8,TW_from=0,TW_to=48,ServiceTime=0,V_speed=1,
+                 min_TW=2,max_TW=8,TW_from=0,TW_to=48,ServiceTime=0,V_speed=0.7,
                  seed=None):
         super(VRPTWDataset, self).__init__()
 
         if max_load < max_demand:
-            raise ValueError(':param max_load: must be > max_demand')
+            raise ValueError(':param max_load[{}]: must be > max_demand[{}]'.format(max_load,max_demand))
         if max_TW < min_TW:
-            raise ValueError(':param max_TW: must be > min_TW')
+            raise ValueError(':param max_TW[{}]: must be > min_TW[{}]'.format(max_TW,min_TW))
         if TW_to < TW_from:
-            raise ValueError(':param TW_end: must be > TW_from')
+            raise ValueError(':param TW_end[{}]: must be > TW_from[{}]'.format(TW_to,TW_from))
 
         if seed is None:
             seed = np.random.randint(1234567890)
@@ -45,13 +45,13 @@ class VRPTWDataset(Dataset):
         self.max_TW=max_TW
         self.tw_from=TW_from
         self.tw_end=TW_to
-        self.serviceTime=ServiceTime/(TW_to-TW_from)
-        self.v_speed=V_speed*(TW_to-TW_from)
+        self.servicetime=ServiceTime/(TW_to-TW_from)
+        self.v_speed=V_speed*(TW_to-TW_from)    # **** Import hyperparameters
 
         # Depot location will be the first node in each
         # tw between [0,1]
         self.locations = torch.rand((num_samples, 2, input_size + 1))
-        self.dis_matrix=self.generate_time_matrix()
+        self.time_matrix=self.generate_time_matrix()
 
         # TW_end = Tw_start + TW_span
         tw_start=torch.randint(TW_from,TW_to-max_TW+1,(num_samples, 1, input_size + 1),dtype=torch.float)
@@ -61,6 +61,8 @@ class VRPTWDataset(Dataset):
         tw_start[:,0,0]=TW_from/TW_to-TW_from
         tw_end[:,0,0]=TW_to/TW_to-TW_from
         self.static = torch.cat((self.locations,tw_start,tw_end),1)
+
+        print('max_rout_time:{}   min_end_window:{}'.format(self.time_matrix[:,0,:].max(),self.static[:,3].min()))
 
         # All states will broadcast the drivers current load
         # Note that we only use a load between [0, 1] to prevent large
@@ -84,8 +86,9 @@ class VRPTWDataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        # (static, dynamic, start_loc)
-        return (self.static[idx], self.dynamic[idx], self.static[idx, :, 0:1])
+        # (static, dynamic, start_loc, time_matrix)
+        return (self.static[idx], self.dynamic[idx],
+                self.static[idx, :, 0:1],self.time_matrix[idx])
 
     def update_mask(self, mask, dynamic, chosen_idx=None):
         """Updates the mask used to hide non-valid states.
@@ -126,14 +129,14 @@ class VRPTWDataset(Dataset):
 
         return new_mask.float()
 
-    def update_time_mask(self,dynamic, chosen_idx=None):
+    def update_time_mask(self,dynamic, chosen_idx=None, pre_chosen_idx=None):
 
         vtime = dynamic.data[:2]  # (batch_size, seq_len)
 
 
-
-    def update_dynamic(self, dynamic, chosen_idx,distance_vector):
-        """Updates the (load, demand) dataset values."""
+    def update_dynamic(self, dynamic, chosen_idx, pre_chosen_idx,time_matrix):
+        """Updates the (load, demand, vtime) dataset values.
+            chosen_idx, pre_chosen_idx ([batch_size])        """
 
         # Update the dynamic elements differently for if we visit depot vs. a city
         visit = chosen_idx.ne(0)
@@ -152,13 +155,12 @@ class VRPTWDataset(Dataset):
         # Across the minibatch - if we've chosen to visit a city, try to satisfy
         # as much demand as possible
         if visit.any():
-            servicetime=torch.full([self.num_samples,1],self.serviceTime)
-
             new_load = torch.clamp(load - demand, min=0)
             new_demand = torch.clamp(demand - load, min=0)
 
-            rout_time=distance_vector.unsqueeze(1)/self.v_speed
-            new_vtime=torch.clamp(vtime+rout_time+servicetime,max=1)
+            # change time include route time and service time
+            rout_time=time_matrix[range(len(chosen_idx)),pre_chosen_idx,chosen_idx].unsqueeze(1) # (batch_size)
+            new_vtime=torch.clamp(vtime+rout_time+self.servicetime,max=1)
 
             # Broadcast the load to all nodes, but update demand seperately
             visit_idx = visit.nonzero().squeeze()
@@ -168,26 +170,27 @@ class VRPTWDataset(Dataset):
             all_demands[visit_idx, 0] = -1. + new_load[visit_idx].view(-1)
             all_vtime[visit_idx]=new_vtime[visit_idx]
 
+
         # Return to depot to fill vehicle load
         if depot.any():
             all_loads[depot.nonzero().squeeze()] = 1.
             all_demands[depot.nonzero().squeeze(), 0] = 0.
+            all_vtime[depot.nonzero().squeeze()]=0.
 
-        tensor = torch.cat((all_loads.unsqueeze(1), all_demands.unsqueeze(1)), 1)
+        tensor = torch.cat((all_loads.unsqueeze(1), all_demands.unsqueeze(1),all_vtime.unsqueeze(1)), 1)
         return torch.tensor(tensor.data, device=dynamic.device)
 
     def generate_time_matrix(self):
-        tbar=tqdm(total=self.num_samples*self.num_nodes*self.num_nodes)
-        dis_max=np.zeros([self.num_samples,self.num_nodes,self.num_nodes])
-        for i in range(self.num_samples):
-            for j in range(self.num_nodes):
-                for k in range(self.num_nodes):
-                    distance=torch.sqrt(torch.pow(self.locations[i,0,j] - self.locations[i,0,k], 2)+
-                                        torch.pow(self.locations[i,1,j] - self.locations[i,1,k], 2))
-                    dis_max[i,j,k]=distance
-                    tbar.update(1)
-        return dis_max
-
+        x=self.locations[:,0,:].unsqueeze(1)
+        y=self.locations[:,1,:].unsqueeze(1)
+        x_=x.transpose(1,2)
+        y_=y.transpose(1,2)
+        diffx=torch.pow(x-x_,2)
+        diffy=torch.pow(y-y_,2)
+        sumdiff=diffx+diffy
+        del(x,y,x_,y_,diffx,diffy)
+        time_matrix=torch.sqrt(sumdiff)/self.v_speed
+        return time_matrix
 
 def reward(static, tour_indices):
     """

@@ -132,7 +132,7 @@ class DRL4TSP(nn.Module):
     """
 
     def __init__(self, static_size, dynamic_size, hidden_size,
-                 update_fn=None, mask_fn=None, num_layers=1, dropout=0.):
+                 update_fn=None, mask_fn=None,num_layers=1, dropout=0., tw_fn=None):
         super(DRL4TSP, self).__init__()
 
         if dynamic_size < 1:
@@ -155,7 +155,7 @@ class DRL4TSP(nn.Module):
         # Used as a proxy initial state in the decoder when not specified
         self.x0 = torch.zeros((1, static_size, 1), requires_grad=True, device=device)
 
-    def forward(self, static, dynamic, decoder_input=None, last_hh=None):
+    def forward(self, static, dynamic,decoder_input=None, last_hh=None, time_matrix=None):
         """
         Parameters
         ----------
@@ -181,6 +181,7 @@ class DRL4TSP(nn.Module):
 
         # Always use a mask - if no function is provided, we don't update it
         mask = torch.ones(batch_size, sequence_size, device=device)
+        mask_tw = torch.ones(batch_size, sequence_size, device=device)
 
         # Structures for holding the output sequences
         tour_idx, tour_logp = [], []
@@ -192,7 +193,11 @@ class DRL4TSP(nn.Module):
         static_hidden = self.static_encoder(static)
         dynamic_hidden = self.dynamic_encoder(dynamic)
 
-        for _ in range(max_steps):
+        # for vrptw vehicle begin from the depot
+        pre_chosen_idx=torch.full([batch_size],0,dtype=torch.int64)
+
+
+        for T in range(max_steps):
 
             if not mask.byte().any():
                 break
@@ -203,7 +208,7 @@ class DRL4TSP(nn.Module):
             probs, last_hh = self.pointer(static_hidden,
                                           dynamic_hidden,
                                           decoder_hidden, last_hh)
-            probs = F.softmax(probs + mask.log(), dim=1)
+            probs = F.softmax(probs + mask.log()+mask_tw.log(), dim=1)
 
             # When training, sample the next step according to its probability.
             # During testing, we can take the greedy approach and choose highest
@@ -221,17 +226,19 @@ class DRL4TSP(nn.Module):
                 logp = prob.log()
 
 
-
             # After visiting a node update the dynamic representation
             if self.update_fn is not None:
-                dynamic = self.update_fn(dynamic, ptr.data)
+                dynamic = self.update_fn(dynamic, ptr.data,pre_chosen_idx,time_matrix)
                 dynamic_hidden = self.dynamic_encoder(dynamic)
 
+                # ****** for tw
+                pre_chosen_idx = ptr.data
                 # Since we compute the VRP in minibatches, some tours may have
                 # number of stops. We force the vehicles to remain at the depot 
                 # in these cases, and logp := 0
                 is_done = dynamic[:, 1].sum(1).eq(0).float()
                 logp = logp * (1. - is_done)
+
 
             # And update the mask so we don't re-visit if we don't need to
             if self.mask_fn is not None:
@@ -244,10 +251,11 @@ class DRL4TSP(nn.Module):
                                          ptr.view(-1, 1, 1)
                                          .expand(-1, input_size, 1)).detach()
 
+
         tour_idx = torch.cat(tour_idx, dim=1)  # (batch_size, seq_len)
         tour_logp = torch.cat(tour_logp, dim=1)  # (batch_size, seq_len)
 
-        return tour_idx, tour_logp
+        return tour_idx, tour_logp,T
 
 
 if __name__ == '__main__':

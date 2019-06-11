@@ -34,8 +34,9 @@ class VehicleRoutingDataset(Dataset):
         self.max_demand = max_demand
 
         # Depot location will be the first node in each
-        locations = torch.rand((num_samples, 2, input_size + 1))
-        self.static = locations
+        self.locations = torch.rand((num_samples, 2, input_size + 1))
+        self.static = self.locations
+        self.time_matrix = self.generate_time_matrix()
 
         # All states will broadcast the drivers current load
         # Note that we only use a load between [0, 1] to prevent large
@@ -57,7 +58,8 @@ class VehicleRoutingDataset(Dataset):
 
     def __getitem__(self, idx):
         # (static, dynamic, start_loc)
-        return (self.static[idx], self.dynamic[idx], self.static[idx, :, 0:1])
+        return (self.static[idx], self.dynamic[idx],
+                self.static[idx, :, 0:1], self.time_matrix[idx])
 
     def update_mask(self, mask, dynamic, chosen_idx=None):
         """Updates the mask used to hide non-valid states.
@@ -134,6 +136,17 @@ class VehicleRoutingDataset(Dataset):
         tensor = torch.cat((all_loads.unsqueeze(1), all_demands.unsqueeze(1)), 1)
         return torch.tensor(tensor.data, device=dynamic.device)
 
+    def generate_time_matrix(self):
+        x=self.locations[:,0,:].unsqueeze(1)
+        y=self.locations[:,1,:].unsqueeze(1)
+        x_=x.transpose(1,2)
+        y_=y.transpose(1,2)
+        diffx=torch.pow(x-x_,2)
+        diffy=torch.pow(y-y_,2)
+        sumdiff=diffx+diffy
+        del(x,y,x_,y_,diffx,diffy)
+        time_matrix=torch.sqrt(sumdiff)
+        return time_matrix
 
 def reward(static, tour_indices):
     """

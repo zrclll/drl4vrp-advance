@@ -19,6 +19,8 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from model import DRL4TSP, Encoder
+from tqdm import tqdm
+import cProfile
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -152,18 +154,21 @@ def train(actor, critic, task, num_nodes, train_data, valid_data, reward_fn,
         epoch_start = time.time()
         start = epoch_start
 
-
+        tbar=tqdm(total=100000)
         for batch_idx, batch in enumerate(train_loader):
 
-            static, dynamic, x0 = batch
+
+            static, dynamic, x0,time_matrix = batch
 
             static = static.to(device)
             dynamic = dynamic.to(device)
+
+            time_matrix=time_matrix.to(device)
+
             x0 = x0.to(device) if len(x0) > 0 else None
 
-
             # Full forward pass through the dataset
-            tour_indices, tour_logp = actor(static, dynamic, x0)
+            tour_indices, tour_logp ,T= actor(static, dynamic, x0,time_matrix=time_matrix)
 
 
             # Sum the log probabilities for each city in the tour
@@ -208,7 +213,8 @@ def train(actor, critic, task, num_nodes, train_data, valid_data, reward_fn,
                 print('  Batch %d/%d, reward: %2.3f, loss: %2.4f, took: %2.4fs' %
                       (batch_idx, len(train_loader), mean_reward, mean_loss,
                        times[-1]))
-
+            tbar.update(1)
+        tbar.close()
         mean_loss = np.mean(losses)
         mean_reward = np.mean(rewards)
 
@@ -369,6 +375,82 @@ def train_vrp(args):
 
     print('Average tour length: ', out)
 
+def train_vrptw(args):
+
+    # Goals from paper:
+    # VRP10, Capacity 20:  4.84  (Greedy)
+    # VRP20, Capacity 30:  6.59  (Greedy)
+    # VRP50, Capacity 40:  11.39 (Greedy)
+    # VRP100, Capacity 50: 17.23  (Greedy)
+
+    from tasks import vrptw
+    from tasks.vrptw import VRPTWDataset
+
+    # Determines the maximum amount of load for a vehicle based on num nodes
+    LOAD_DICT = {10: 20, 20: 30, 50: 40, 100: 50}
+    MAX_DEMAND = 9
+    STATIC_SIZE = 4 # (x, y)
+    DYNAMIC_SIZE = 3 # (load, demand)
+
+    max_load = LOAD_DICT[args.num_nodes]
+
+    train_data = VRPTWDataset(args.train_size,
+                                       args.num_nodes,
+                                       max_load,
+                                       MAX_DEMAND,
+                              args.min_tw,args.max_tw,
+                              args.tw_from,args.tw_to,
+                              args.servicetime,args.v_speed,
+                                       args.seed)
+
+    valid_data = VRPTWDataset(args.valid_size,
+                                       args.num_nodes,
+                                       max_load,
+                                       MAX_DEMAND,
+                              args.min_tw, args.max_tw,
+                              args.tw_from, args.tw_to,
+                              args.servicetime, args.v_speed,
+                                       args.seed + 1)
+
+    actor = DRL4TSP(STATIC_SIZE,
+                    DYNAMIC_SIZE,
+                    args.hidden_size,
+                    train_data.update_dynamic,
+                    train_data.update_mask,
+                    args.num_layers,
+                    args.dropout,
+                    train_data.update_time_mask).to(device)
+
+    critic = StateCritic(STATIC_SIZE, DYNAMIC_SIZE, args.hidden_size).to(device)
+
+    kwargs = vars(args)
+    kwargs['train_data'] = train_data
+    kwargs['valid_data'] = valid_data
+    kwargs['reward_fn'] = vrptw.reward
+    kwargs['render_fn'] = vrptw.render
+
+    if args.checkpoint:
+        path = os.path.join(args.checkpoint, 'actor.pt')
+        actor.load_state_dict(torch.load(path, device))
+
+        path = os.path.join(args.checkpoint, 'critic.pt')
+        critic.load_state_dict(torch.load(path, device))
+
+    if not args.test:
+        # cProfile.run(train(actor, critic, **kwargs))
+        train(actor, critic, **kwargs)
+
+    test_data = VRPTWDataset(args.valid_size,
+                                      args.num_nodes,
+                                      max_load,
+                                      MAX_DEMAND,
+                                      args.seed + 2)
+
+    test_dir = 'test'
+    test_loader = DataLoader(test_data, args.batch_size, False, num_workers=0)
+    out = validate(test_loader, actor, vrptw.reward, vrptw.render, test_dir, num_plot=5)
+
+    print('Average tour length: ', out)
 
 if __name__ == '__main__':
 
@@ -376,7 +458,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', default=12345, type=int)
     parser.add_argument('--checkpoint', default=None)
     parser.add_argument('--test', action='store_true', default=False)
-    parser.add_argument('--task', default='vrp')
+    parser.add_argument('--task', default='vrptw')
     parser.add_argument('--nodes', dest='num_nodes', default=20, type=int)
     parser.add_argument('--actor_lr', default=5e-4, type=float)
     parser.add_argument('--critic_lr', default=5e-4, type=float)
@@ -387,6 +469,12 @@ if __name__ == '__main__':
     parser.add_argument('--layers', dest='num_layers', default=1, type=int)
     parser.add_argument('--train-size',default=1000000, type=int)
     parser.add_argument('--valid-size', default=1000, type=int)
+    parser.add_argument('--min_tw',default=2,type=int)
+    parser.add_argument('--max_tw',default=8,type=int)
+    parser.add_argument('--tw_from',default=0,type=int)
+    parser.add_argument('--tw_to',default=48,type=int)
+    parser.add_argument('--servicetime',default=0,type=int)
+    parser.add_argument('--v_speed',default=0.7,type=float)
 
     args = parser.parse_args()
 
@@ -394,9 +482,14 @@ if __name__ == '__main__':
     #args.checkpoint = os.path.join('vrp', '10', '12_59_47.350165' + os.path.sep)
     #print(args.checkpoint)
 
+    import cProfile
+
+
     if args.task == 'tsp':
         train_tsp(args)
     elif args.task == 'vrp':
         train_vrp(args)
+    elif args.task=='vrptw':
+       train_vrptw(args)
     else:
         raise ValueError('Task <%s> not understood'%args.task)
