@@ -141,7 +141,7 @@ class DRL4TSP(nn.Module):
 
         self.update_fn = update_fn
         self.mask_fn = mask_fn
-
+        self.mask_tw_fn=tw_fn
         # Define the encoder & decoder models
         self.static_encoder = Encoder(static_size, hidden_size)
         self.dynamic_encoder = Encoder(dynamic_size, hidden_size)
@@ -208,7 +208,8 @@ class DRL4TSP(nn.Module):
             probs, last_hh = self.pointer(static_hidden,
                                           dynamic_hidden,
                                           decoder_hidden, last_hh)
-            probs = F.softmax(probs + mask.log()+mask_tw.log(), dim=1)
+            total_mask=mask*mask_tw # mask and mask_tw both 1 is 1
+            probs = F.softmax(probs + total_mask.log(), dim=1)
 
             # When training, sample the next step according to its probability.
             # During testing, we can take the greedy approach and choose highest
@@ -218,7 +219,7 @@ class DRL4TSP(nn.Module):
                 # Sometimes an issue with Categorical & sampling on GPU; See:
                 # https://github.com/pemami4911/neural-combinatorial-rl-pytorch/issues/5
                 ptr = m.sample()
-                while not torch.gather(mask, 1, ptr.data.unsqueeze(1)).byte().all():
+                while not torch.gather(total_mask, 1, ptr.data.unsqueeze(1)).byte().all():
                     ptr = m.sample()
                 logp = m.log_prob(ptr)
             else:
@@ -228,7 +229,7 @@ class DRL4TSP(nn.Module):
 
             # After visiting a node update the dynamic representation
             if self.update_fn is not None:
-                dynamic = self.update_fn(dynamic, ptr.data,pre_chosen_idx,time_matrix)
+                dynamic = self.update_fn(dynamic, ptr.data,pre_chosen_idx,time_matrix,static)
                 dynamic_hidden = self.dynamic_encoder(dynamic)
 
                 # ****** for tw
@@ -243,6 +244,7 @@ class DRL4TSP(nn.Module):
             # And update the mask so we don't re-visit if we don't need to
             if self.mask_fn is not None:
                 mask = self.mask_fn(mask, dynamic, ptr.data).detach()
+                mask_tw=self.mask_tw_fn(dynamic,ptr.data,time_matrix,static).detach()
 
             tour_logp.append(logp.unsqueeze(1))
             tour_idx.append(ptr.data.unsqueeze(1))

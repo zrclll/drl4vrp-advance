@@ -129,7 +129,7 @@ class VRPTWDataset(Dataset):
 
         return new_mask.float()
 
-    def update_time_mask(self,dynamic, chosen_idx=None,time_matrix=None):
+    def update_time_mask(self,dynamic, chosen_idx=None,time_matrix=None,static=None):
         '''
         to mask the point that can't be serve before end time
         :param dynamic: torch(batch_size,dynamic_len,seq_len)
@@ -139,7 +139,7 @@ class VRPTWDataset(Dataset):
         '''
         vtime = dynamic.data[:,2].clone()  # (batch_size, seq_len)
         batch_size=len(chosen_idx)
-        endtime = self.static[:, -1]  # (batch_size,seq_len)
+        endtime = static[:, -1]  # (batch_size,seq_len)
 
         # get the time matrix of chosen point from time_matrix
         chosen_time=time_matrix[range(batch_size),chosen_idx]   # (batch,seq_len)
@@ -147,15 +147,16 @@ class VRPTWDataset(Dataset):
 
         # compare to end time windows
         time_mask=endtime.ge(new_time)
-        return time_mask
+        return time_mask.float()
 
-    def update_dynamic(self, dynamic, chosen_idx, pre_chosen_idx,time_matrix):
+    def update_dynamic(self, dynamic, chosen_idx, pre_chosen_idx,time_matrix,static):
         """Updates the (load, demand, vtime) dataset values.
             chosen_idx, pre_chosen_idx ([batch_size])        """
         batch_size = len(chosen_idx)
         # Update the dynamic elements differently for if we visit depot vs. a city
         visit = chosen_idx.ne(0)
         depot = chosen_idx.eq(0)
+        int_chosen_idx=chosen_idx
 
         # Clone the dynamic variable so we don't mess up graph
         all_loads = dynamic[:, 0].clone()
@@ -176,8 +177,10 @@ class VRPTWDataset(Dataset):
             # change time include route time and service time
             rout_time=time_matrix[range(batch_size),pre_chosen_idx,chosen_idx].unsqueeze(1) # (batch_size)
             # TODO if vehicle arrived before the start time, the vehicle will leave at start time + service time
-            startime = self.static[:, -2][range(batch_size,chosen_idx)] # (batch_size)
-            temp_vtime=torch.clamp(vtime+rout_time) #(batch)
+
+            startime = static[:, -2]
+            startime=startime[range(batch_size),chosen_idx].unsqueeze(1) # (batch_size)
+            temp_vtime=torch.clamp(vtime+rout_time,max=1) #(batch)
             temp_vtime=torch.where(temp_vtime<startime,startime,temp_vtime)
             new_vtime=torch.clamp(temp_vtime+self.servicetime,max=1)
 
@@ -231,7 +234,7 @@ def reward(static, tour_indices):
     return tour_len.sum(1)
 
 
-def render(static, tour_indices, save_path):
+def render(static, tour_indices, save_path,time_matrix):
     """Plots the found solution."""
 
     plt.close('all')

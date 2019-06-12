@@ -19,8 +19,6 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from model import DRL4TSP, Encoder
-from tqdm import tqdm
-import cProfile
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -99,14 +97,15 @@ def validate(data_loader, actor, reward_fn, render_fn=None, save_dir='.',
     rewards = []
     for batch_idx, batch in enumerate(data_loader):
 
-        static, dynamic, x0 = batch
+        static, dynamic, x0 ,time_matrix= batch
 
         static = static.to(device)
         dynamic = dynamic.to(device)
         x0 = x0.to(device) if len(x0) > 0 else None
+        time_matrix=time_matrix.to(device)
 
         with torch.no_grad():
-            tour_indices, _ = actor.forward(static, dynamic, x0)
+            tour_indices, _,_ = actor.forward(static, dynamic, x0,time_matrix=time_matrix)
 
         reward = reward_fn(static, tour_indices).mean().item()
         rewards.append(reward)
@@ -114,7 +113,7 @@ def validate(data_loader, actor, reward_fn, render_fn=None, save_dir='.',
         if render_fn is not None and batch_idx < num_plot:
             name = 'batch%d_%2.4f.png'%(batch_idx, reward)
             path = os.path.join(save_dir, name)
-            render_fn(static, tour_indices, path)
+            render_fn(static, tour_indices, path,time_matrix)
 
     actor.train()
     return np.mean(rewards)
@@ -154,7 +153,6 @@ def train(actor, critic, task, num_nodes, train_data, valid_data, reward_fn,
         epoch_start = time.time()
         start = epoch_start
 
-        tbar=tqdm(total=100000)
         for batch_idx, batch in enumerate(train_loader):
 
 
@@ -213,8 +211,6 @@ def train(actor, critic, task, num_nodes, train_data, valid_data, reward_fn,
                 print('  Batch %d/%d, reward: %2.3f, loss: %2.4f, took: %2.4fs' %
                       (batch_idx, len(train_loader), mean_reward, mean_loss,
                        times[-1]))
-            tbar.update(1)
-        tbar.close()
         mean_loss = np.mean(losses)
         mean_reward = np.mean(rewards)
 
@@ -441,10 +437,13 @@ def train_vrptw(args):
         train(actor, critic, **kwargs)
 
     test_data = VRPTWDataset(args.valid_size,
-                                      args.num_nodes,
-                                      max_load,
-                                      MAX_DEMAND,
-                                      args.seed + 2)
+                                       args.num_nodes,
+                                       max_load,
+                                       MAX_DEMAND,
+                              args.min_tw, args.max_tw,
+                              args.tw_from, args.tw_to,
+                              args.servicetime, args.v_speed,
+                                       args.seed + 2)
 
     test_dir = 'test'
     test_loader = DataLoader(test_data, args.batch_size, False, num_workers=0)
@@ -464,7 +463,7 @@ if __name__ == '__main__':
     parser.add_argument('--critic_lr', default=5e-4, type=float)
     parser.add_argument('--max_grad_norm', default=2., type=float)
     parser.add_argument('--batch_size', default=256, type=int)
-    parser.add_argument('--hidden', dest='hidden_size', default=128, type=int)
+    parser.add_argument('--hidden', dest='hidden_size', default=16, type=int)
     parser.add_argument('--dropout', default=0.1, type=float)
     parser.add_argument('--layers', dest='num_layers', default=1, type=int)
     parser.add_argument('--train-size',default=1000000, type=int)
