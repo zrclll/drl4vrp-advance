@@ -129,15 +129,30 @@ class VRPTWDataset(Dataset):
 
         return new_mask.float()
 
-    def update_time_mask(self,dynamic, chosen_idx=None, pre_chosen_idx=None):
+    def update_time_mask(self,dynamic, chosen_idx=None,time_matrix=None):
+        '''
+        to mask the point that can't be serve before end time
+        :param dynamic: torch(batch_size,dynamic_len,seq_len)
+        :param chosen_idx: torch(batch_size)
+        :param time_matrix: torch(batch_size,seq_len,seq_len)
+        :return: time_mask:torch(batch_size,seq_len)
+        '''
+        vtime = dynamic.data[:,2].clone()  # (batch_size, seq_len)
+        batch_size=len(chosen_idx)
+        endtime = self.static[:, -1]  # (batch_size,seq_len)
 
-        vtime = dynamic.data[:2]  # (batch_size, seq_len)
+        # get the time matrix of chosen point from time_matrix
+        chosen_time=time_matrix[range(batch_size),chosen_idx]   # (batch,seq_len)
+        new_time=chosen_time+vtime
 
+        # compare to end time windows
+        time_mask=endtime.ge(new_time)
+        return time_mask
 
     def update_dynamic(self, dynamic, chosen_idx, pre_chosen_idx,time_matrix):
         """Updates the (load, demand, vtime) dataset values.
             chosen_idx, pre_chosen_idx ([batch_size])        """
-
+        batch_size = len(chosen_idx)
         # Update the dynamic elements differently for if we visit depot vs. a city
         visit = chosen_idx.ne(0)
         depot = chosen_idx.eq(0)
@@ -159,8 +174,12 @@ class VRPTWDataset(Dataset):
             new_demand = torch.clamp(demand - load, min=0)
 
             # change time include route time and service time
-            rout_time=time_matrix[range(len(chosen_idx)),pre_chosen_idx,chosen_idx].unsqueeze(1) # (batch_size)
-            new_vtime=torch.clamp(vtime+rout_time+self.servicetime,max=1)
+            rout_time=time_matrix[range(batch_size),pre_chosen_idx,chosen_idx].unsqueeze(1) # (batch_size)
+            # TODO if vehicle arrived before the start time, the vehicle will leave at start time + service time
+            startime = self.static[:, -2][range(batch_size,chosen_idx)] # (batch_size)
+            temp_vtime=torch.clamp(vtime+rout_time) #(batch)
+            temp_vtime=torch.where(temp_vtime<startime,startime,temp_vtime)
+            new_vtime=torch.clamp(temp_vtime+self.servicetime,max=1)
 
             # Broadcast the load to all nodes, but update demand seperately
             visit_idx = visit.nonzero().squeeze()
@@ -169,7 +188,6 @@ class VRPTWDataset(Dataset):
             all_demands[visit_idx, chosen_idx[visit_idx]] = new_demand[visit_idx].view(-1)
             all_demands[visit_idx, 0] = -1. + new_load[visit_idx].view(-1)
             all_vtime[visit_idx]=new_vtime[visit_idx]
-
 
         # Return to depot to fill vehicle load
         if depot.any():
