@@ -46,7 +46,7 @@ class VRPTWDataset(Dataset):
         self.tw_from=TW_from
         self.tw_end=TW_to
         self.servicetime=ServiceTime/(TW_to-TW_from)
-        self.v_speed=V_speed*(TW_to-TW_from)    # **** Import hyperparameters
+        self.v_speed=V_speed*(TW_to-TW_from)    # **** Import hyperparameters, V_speed is weight between time and speed
 
         # Depot location will be the first node in each
         # tw between [0,1]
@@ -56,10 +56,10 @@ class VRPTWDataset(Dataset):
         # TW_end = Tw_start + TW_span
         tw_start=torch.randint(TW_from,TW_to-max_TW+1,(num_samples, 1, input_size + 1),dtype=torch.float)
         tw_span=torch.randint(min_TW,max_TW+1,(num_samples, 1, input_size + 1),dtype=torch.float)
-        tw_end=(tw_start+tw_span)/float(TW_to-TW_from)
-        tw_start=tw_start/float(TW_to-TW_from)
-        tw_start[:,0,0]=TW_from/TW_to-TW_from
-        tw_end[:,0,0]=TW_to/TW_to-TW_from
+        tw_end=(tw_start+tw_span-TW_from)/float(TW_to-TW_from)
+        tw_start=(tw_start-TW_from)/float(TW_to-TW_from)
+        tw_start[:,0,0]=0.
+        tw_end[:,0,0]=1.2
         self.static = torch.cat((self.locations,tw_start,tw_end),1)
 
         print('max_rout_time:{}   min_end_window:{}'.format(self.time_matrix[:,0,:].max(),self.static[:,3].min()))

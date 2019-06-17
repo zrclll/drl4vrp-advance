@@ -21,6 +21,7 @@ from tensorboardX import SummaryWriter
 from model import DRL4TSP, Encoder
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+#device = torch.device('cpu')
 
 class StateCritic(nn.Module):
     """Estimates the problem complexity.
@@ -456,7 +457,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Combinatorial Optimization')
     parser.add_argument('--seed', default=12345, type=int)
     parser.add_argument('--checkpoint', default=None)
-    parser.add_argument('--test', action='store_true', default=True)
+    parser.add_argument('--test', action='store_true', default=False)
     parser.add_argument('--task', default='vrptw')
     parser.add_argument('--nodes', dest='num_nodes', default=20, type=int)
     parser.add_argument('--actor_lr', default=5e-4, type=float)

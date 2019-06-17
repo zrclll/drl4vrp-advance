@@ -208,7 +208,7 @@ class DRL4TSP(nn.Module):
             probs, last_hh = self.pointer(static_hidden,
                                           dynamic_hidden,
                                           decoder_hidden, last_hh)
-            total_mask=mask*mask_tw # mask and mask_tw both 1 is 1
+            total_mask=mask_tw*mask # mask and mask_tw both 1 is 1
             probs = F.softmax(probs + total_mask.log(), dim=1)
 
             # When training, sample the next step according to its probability.
