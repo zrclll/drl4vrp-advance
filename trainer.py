@@ -456,7 +456,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Combinatorial Optimization')
     parser.add_argument('--seed', default=12345, type=int)
     parser.add_argument('--checkpoint', default=None)
-    parser.add_argument('--test', action='store_true', default=False)
+    parser.add_argument('--test', action='store_true', default=True)
     parser.add_argument('--task', default='vrptw')
     parser.add_argument('--nodes', dest='num_nodes', default=20, type=int)
     parser.add_argument('--actor_lr', default=5e-4, type=float)
@@ -472,7 +472,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_tw',default=8,type=int)
     parser.add_argument('--tw_from',default=0,type=int)
     parser.add_argument('--tw_to',default=48,type=int)
-    parser.add_argument('--servicetime',default=0,type=int)
+    parser.add_argument('--servicetime',default=1,type=int)
     parser.add_argument('--v_speed',default=0.7,type=float)
 
     args = parser.parse_args()
